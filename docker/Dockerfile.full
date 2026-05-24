@@ -1,6 +1,6 @@
 FROM python:3.12-slim-bookworm
 
-MAINTAINER Jookies LTD <jasmin@jookies.net>
+LABEL maintainer="Jookies LTD <jasmin@jookies.net>"
 
 # add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added
 RUN groupadd -r jasmin && useradd -r -g jasmin jasmin
@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y \
 RUN apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Run python with jemalloc
-ENV LD_PRELOAD /usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
 
 # Install Jasmin SMS gateway
 RUN mkdir -p /etc/jasmin/resource \
@@ -36,7 +36,7 @@ COPY . .
 
 RUN pip install .
 
-ENV UNICODEMAP_JP unicode-ascii
+ENV UNICODEMAP_JP=unicode-ascii
 
 WORKDIR /usr/jasmin
 

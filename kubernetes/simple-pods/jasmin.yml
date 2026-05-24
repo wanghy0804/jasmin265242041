@@ -17,6 +17,7 @@ spec:
       containers:
         - name: jasmin
           image: jookies/jasmin:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 2775
               name: smpp-port
@@ -38,6 +39,7 @@ spec:
               mountPath: /var/log/jasmin
         - name: interceptord-sidecar
           image: jookies/jasmin:latest
+          imagePullPolicy: IfNotPresent
           command: ["interceptord.py"]
           lifecycle:
             postStart:
@@ -48,6 +50,7 @@ spec:
               mountPath: /tmp/config
         - name: dlrlookupd-sidecar
           image: jookies/jasmin:latest
+          imagePullPolicy: IfNotPresent
           command: ["dlrlookupd.py"]
           lifecycle:
             postStart:
@@ -58,6 +61,7 @@ spec:
               mountPath: /tmp/config
         - name: dlrd-sidecar
           image: jookies/jasmin:latest
+          imagePullPolicy: IfNotPresent
           command: ["dlrd.py"]
           lifecycle:
             postStart:
@@ -68,6 +72,7 @@ spec:
               mountPath: /tmp/config
         - name: deliversmd-sidecar
           image: jookies/jasmin:latest
+          imagePullPolicy: IfNotPresent
           command: ["deliversmd.py"]
           lifecycle:
             postStart:

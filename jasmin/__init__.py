@@ -29,6 +29,10 @@ RUNNING_KUBERNETES = False
 PRIMARY_POD = False
 if 'KUBERNETES_SERVICE_HOST' in os.environ:
     RUNNING_KUBERNETES = True
+    # StatefulSet pods are named "<name>-<ordinal>" (e.g. jasmin-0); a Deployment's pods
+    # are named "<name>-<hash>-<rand>" and won't match -> re.search returns None. Guard
+    # against that (the crash seen after switching StatefulSet -> Deployment) and treat a
+    # single non-ordinal pod as the primary one.
     _r = re.search(r"^([a-z0-9A-Z]+)\-(\d+)$", HOSTNAME)
-    if len(_r.groups()) == 2 and int(_r.group(2)) == 0:
+    if _r is None or int(_r.group(2)) == 0:
         PRIMARY_POD = True

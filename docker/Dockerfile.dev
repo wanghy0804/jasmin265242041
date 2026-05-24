@@ -1,6 +1,6 @@
 FROM python:3.12-slim-bookworm
 
-MAINTAINER Jookies LTD <jasmin@jookies.net>
+LABEL maintainer="Jookies LTD <jasmin@jookies.net>"
 
 # add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added
 RUN groupadd -r jasmin && useradd -r -g jasmin jasmin
@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y \
 RUN apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Run python with jemalloc
-ENV LD_PRELOAD /usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
 
 # Install Jasmin SMS gateway
 RUN mkdir -p /etc/jasmin/resource \
@@ -45,13 +45,13 @@ RUN pip install -e git+https://github.com/jookies/smpp.pdu.git@master#egg=smpp.p
 RUN pip install -e git+https://github.com/jookies/smpp.twisted.git@master#egg=smpp.twisted3
 RUN pip install .
 
-ENV UNICODEMAP_JP unicode-ascii
+ENV UNICODEMAP_JP=unicode-ascii
 
-ENV ROOT_PATH /
-ENV CONFIG_PATH /etc/jasmin
-ENV RESOURCE_PATH /etc/jasmin/resource
-ENV STORE_PATH /etc/jasmin/store
-ENV LOG_PATH /var/log/jasmin
+ENV ROOT_PATH=/
+ENV CONFIG_PATH=/etc/jasmin
+ENV RESOURCE_PATH=/etc/jasmin/resource
+ENV STORE_PATH=/etc/jasmin/store
+ENV LOG_PATH=/var/log/jasmin
 
 COPY misc/config/*.cfg ${CONFIG_PATH}/
 COPY misc/config/resource ${RESOURCE_PATH}
