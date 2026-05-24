@@ -59,3 +59,8 @@ celerybeat-schedule.db
 *.rpm
 
 .env
+.gitnexus,
+/.claude/skills
+AGENTS.md
+CLAUDE.md
+/.gitnexus

@@ -1,75 +1,5 @@
-kind: PersistentVolume
-apiVersion: v1
-metadata:
-  name: jasmin-data-pv
-  labels:
-    pv-name: jasmin-data-pv
-spec:
-  capacity:
-    storage: 1Gi
-  accessModes:
-    - ReadWriteOnce
-  hostPath:
-    path: /k8s-volumes/jasmin/jasmin-data-pv
----
-kind: PersistentVolume
-apiVersion: v1
-metadata:
-  name: jasmin-logs-pv
-  labels:
-    pv-name: jasmin-logs-pv
-spec:
-  capacity:
-    storage: 4Gi
-  accessModes:
-    - ReadWriteOnce
-  hostPath:
-    path: /k8s-volumes/jasmin/jasmin-logs-pv
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: jasmin-data-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 512Mi
-  selector:
-    matchLabels:
-      pv-name: jasmin-data-pv
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: jasmin-logs-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 3Gi
-  selector:
-    matchLabels:
-      pv-name: jasmin-logs-pv
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: jasmin-logs-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 3Gi
-  selector:
-    matchLabels:
-      pv-name: jasmin-logs-pv
----
 apiVersion: apps/v1
-kind: StatefulSet
+kind: Deployment
 metadata:
   name: jasmin
   labels:
@@ -79,7 +9,6 @@ spec:
   selector:
     matchLabels:
       app: jasmin
-  podManagementPolicy: "Parallel"
   template:
     metadata:
       labels:
@@ -152,8 +81,9 @@ spec:
           configMap:
             name: etc-jasmin
         - name: jasmin-data
-          persistentVolumeClaim:
-            claimName: jasmin-data-pvc
+          hostPath:
+            path: /opt/jasmin/store
+            type: DirectoryOrCreate
         - name: interceptor-config
           configMap:
             name: etc-interceptor
@@ -167,8 +97,9 @@ spec:
           configMap:
             name: etc-deliversmd
         - name: jasmin-logs
-          persistentVolumeClaim:
-            claimName: jasmin-logs-pvc
+          hostPath:
+            path: /opt/jasmin/logs
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service
