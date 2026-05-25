@@ -24,6 +24,7 @@ spec:
       containers:
         - name: grafana
           image: grafana/grafana:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
               name: http-grafana
@@ -148,6 +149,7 @@ spec:
       initContainers:
         - name: file-ownership-fix
           image: busybox
+          imagePullPolicy: IfNotPresent
           command: ["/bin/sh","-c"]
           args:
             - chown 65534:65534 /prometheus
@@ -157,6 +159,7 @@ spec:
       containers:
         - name: prometheus
           image: prom/prometheus:latest
+          imagePullPolicy: IfNotPresent
           args:
             - --config.file=/etc/prometheus/prometheus.yml
             - '--storage.tsdb.path=/prometheus'

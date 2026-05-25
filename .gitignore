@@ -64,3 +64,4 @@ celerybeat-schedule.db
 AGENTS.md
 CLAUDE.md
 /.gitnexus
+/kubernetes/images

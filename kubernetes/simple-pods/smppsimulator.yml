@@ -20,6 +20,7 @@ spec:
       containers:
       - name: smppsim
         image: jookies/smppsim:latest
+        imagePullPolicy: IfNotPresent
 ---
 apiVersion: v1
 kind: Service

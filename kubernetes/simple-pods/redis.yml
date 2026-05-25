@@ -20,6 +20,7 @@ spec:
       containers:
       - name: redis
         image: redis:6-alpine
+        imagePullPolicy: IfNotPresent
         command:
           - redis-server
           - "/etc/redis/redis.conf"

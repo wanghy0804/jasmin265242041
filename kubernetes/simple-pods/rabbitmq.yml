@@ -20,6 +20,7 @@ spec:
       containers:
       - name: rabbit
         image: rabbitmq:3.10-management-alpine
+        imagePullPolicy: IfNotPresent
         volumeMounts:
           - name: etcrabbit
             mountPath: /etc/rabbitmq/conf.d
