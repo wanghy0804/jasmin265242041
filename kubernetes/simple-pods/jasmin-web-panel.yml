@@ -132,8 +132,9 @@ spec:
           command: ["sh", "-c", "until nc -z jasmin-webdb 5432; do echo 'waiting for jasmin-webdb:5432'; sleep 2; done"]
       containers:
         - name: web
-          image: tarekaec/jasmin_web_panel:1.4.4
-          imagePullPolicy: IfNotPresent
+          # 本地自建镜像(源码: /Users/Git/jasmin-web-panel2605242043),与上游 tarekaec/jasmin_web_panel 区分
+          image: jasmin-web-panel2605242043:local
+          imagePullPolicy: Never
           ports:
             - containerPort: 8000
               name: http
@@ -210,8 +211,9 @@ spec:
           command: ["sh", "-c", "until nc -z jasmin-webdb 5432; do echo 'waiting for jasmin-webdb:5432'; sleep 2; done"]
       containers:
         - name: celery
-          image: tarekaec/jasmin_web_panel:1.4.4
-          imagePullPolicy: IfNotPresent
+          # 与 web 共用同一本地镜像,仅用命令覆盖入口跑 celery worker
+          image: jasmin-web-panel2605242043:local
+          imagePullPolicy: Never
           # 覆盖镜像默认 ENTRYPOINT,改跑 celery worker
           command: ["bash", "./docker-entrypoint-celery.sh"]
           envFrom:
