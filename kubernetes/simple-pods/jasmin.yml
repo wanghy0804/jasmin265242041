@@ -2,17 +2,19 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: jasmin
+  namespace: jasmin
   labels:
-    app: jasmin
+    name: jasmin
+    k8s.kuboard.cn/name: jasmin
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: jasmin
+      name: jasmin
   template:
     metadata:
       labels:
-        app: jasmin
+        name: jasmin
     spec:
       containers:
         - name: jasmin
@@ -109,52 +111,86 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  annotations: {}
+  labels:
+    name: jasmin
+    k8s.kuboard.cn/name: jasmin
   name: jasmin-cli
-  annotations:
-    metallb.universe.tf/address-pool: management-network
+  namespace: jasmin
 spec:
-  type: LoadBalancer
-  selector:
-    app: jasmin
+  externalTrafficPolicy: Cluster
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
   ports:
-  - protocol: TCP
-    port: 8990
-    targetPort: cli-port
+    - name: cli
+      nodePort: 30990
+      port: 8990
+      protocol: TCP
+      targetPort: cli-port
+  selector:
+    name: jasmin
+  sessionAffinity: None
+  type: NodePort
 ---
 apiVersion: v1
 kind: Service
 metadata:
+  annotations: {}
+  labels:
+    name: jasmin
+    k8s.kuboard.cn/name: jasmin
   name: jasmin-smpp-api
-  annotations:
-    metallb.universe.tf/address-pool: production-network
+  namespace: jasmin
 spec:
-  type: LoadBalancer
-  selector:
-    app: jasmin
+  externalTrafficPolicy: Cluster
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
   ports:
-  - protocol: TCP
-    port: 2775
-    targetPort: smpp-port
+    - name: smpp
+      nodePort: 30775
+      port: 2775
+      protocol: TCP
+      targetPort: smpp-port
+  selector:
+    name: jasmin
+  sessionAffinity: None
+  type: NodePort
 ---
 apiVersion: v1
 kind: Service
 metadata:
+  annotations: {}
+  labels:
+    name: jasmin
+    k8s.kuboard.cn/name: jasmin
   name: jasmin-http-api
-  annotations:
-    metallb.universe.tf/address-pool: production-network
+  namespace: jasmin
 spec:
-  type: LoadBalancer
-  selector:
-    app: jasmin
+  externalTrafficPolicy: Cluster
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
   ports:
-  - protocol: TCP
-    port: 1401
-    targetPort: http-port
+    - name: http
+      nodePort: 30401
+      port: 1401
+      protocol: TCP
+      targetPort: http-port
+  selector:
+    name: jasmin
+  sessionAffinity: None
+  type: NodePort
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: etc-jasmin
+  namespace: jasmin
 data:
   jasmin.cfg: |
       # This is a simplified config version taken from the /etc/jasmin/jasmin.cfg file
@@ -163,23 +199,23 @@ data:
       [smpp-server]
       # Disabled to allow smpp stress tests without charging & billing management
       billing_feature    = False
-    
+
       [sm-listener]
       publish_submit_sm_resp = False
       submit_max_age_smppc_not_ready = 30
-      
+
       [deliversm-thrower]
       http_timeout = 10
       retry_delay = 90
       max_retries = 2
-      
+
       [amqp-broker]
       host = rabbitmq-broker
-      
+
       [redis-client]
       host = redis-server
       poolsize = 30
-    
+
       [jcli]
       bind = 0.0.0.0
 ---
@@ -187,6 +223,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: etc-interceptor
+  namespace: jasmin
 data:
   interceptor.cfg: |
       # This is a simplified config version taken from the /etc/jasmin/interceptor.cfg file
@@ -195,6 +232,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: etc-dlrlookupd
+  namespace: jasmin
 data:
   dlrlookupd.cfg: |
       # This is the Jasmin DLR Lookup Daemon configuration file.
@@ -206,7 +244,7 @@ data:
 
       [amqp-broker]
       host = rabbitmq-broker
-      
+
       [redis-client]
       host = redis-server
       poolsize = 30
@@ -215,6 +253,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: etc-dlr
+  namespace: jasmin
 data:
   dlr.cfg: |
       # This is the Jasmin DLR Lookup Daemon configuration file.
@@ -224,10 +263,10 @@ data:
       http_timeout = 10
       retry_delay = 90
       max_retries = 1
-      
+
       [amqp-broker]
       host = rabbitmq-broker
-      
+
       [redis-client]
       host = redis-server
       poolsize = 30
@@ -236,6 +275,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: etc-deliversmd
+  namespace: jasmin
 data:
   deliversmd.cfg: |
       # This is the Jasmin Deliver-Sm Daemon configuration file.
@@ -245,10 +285,10 @@ data:
       http_timeout = 10
       retry_delay = 90
       max_retries = 1
-      
+
       [amqp-broker]
       host = rabbitmq-broker
-      
+
       [redis-client]
       host = redis-server
       poolsize = 30

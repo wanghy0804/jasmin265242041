@@ -1,64 +1,69 @@
-apiVersion: v1
-kind: Pod
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: grafana
+  namespace: jasmin
   labels:
     name: grafana
+    k8s.kuboard.cn/name: grafana
 spec:
-  securityContext:
-    fsGroup: 472
-    runAsUser: 0
-    supplementalGroups:
-      - 0
-  containers:
-    - name: grafana
-      image: grafana/grafana:latest
-      ports:
-        - containerPort: 3000
-          name: http-grafana
-          protocol: TCP
-      volumeMounts:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: grafana
+  template:
+    metadata:
+      labels:
+        name: grafana
+    spec:
+      securityContext:
+        fsGroup: 472
+        runAsUser: 0
+        supplementalGroups:
+          - 0
+      containers:
+        - name: grafana
+          image: grafana/grafana:latest
+          ports:
+            - containerPort: 3000
+              name: http-grafana
+              protocol: TCP
+          volumeMounts:
+            - name: provisioning-ds-prometheus
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: provisioning-dashboards
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards-jasmin
+              mountPath: /opt/grafana-dashboards/Jasmin
+            - name: dashboards-rabbitmq
+              mountPath: /opt/grafana-dashboards/RabbitMQ
+            - name: grafana-data
+              mountPath: /var/lib/grafana
+      volumes:
         - name: provisioning-ds-prometheus
-          mountPath: /etc/grafana/provisioning/datasources
+          configMap:
+            name: provisioning-ds-prometheus
         - name: provisioning-dashboards
-          mountPath: /etc/grafana/provisioning/dashboards
-        - name: dashboards
-          mountPath: /opt/grafana-dashboards
+          configMap:
+            name: provisioning-dashboards
+        - name: dashboards-jasmin
+          configMap:
+            name: grafana-dashboards-jasmin
+            optional: true
+        - name: dashboards-rabbitmq
+          configMap:
+            name: grafana-dashboards-rabbitmq
+            optional: true
         - name: grafana-data
-          mountPath: /var/lib/grafana
-  initContainers:
-    - name: grafana-installer
-      image: busybox
-      command: ["/bin/sh","-c"]
-      # @TODO: switch https links back to master once 0.10.13 is published
-      args:
-        - mkdir -p /tmp-dashboards/Jasmin;
-          mkdir -p /tmp-dashboards/RabbitMQ;
-          wget -O '/tmp-dashboards/Jasmin/HTTP API.json' 'https://raw.githubusercontent.com/jookies/jasmin/0.10.13/docker/grafana/dashboards/Jasmin/HTTP%20API.json';
-          wget -O '/tmp-dashboards/Jasmin/SMPP Clients.json' 'https://raw.githubusercontent.com/jookies/jasmin/0.10.13/docker/grafana/dashboards/Jasmin/SMPP%20Clients.json';
-          wget -O '/tmp-dashboards/Jasmin/SMPP Server.json' 'https://raw.githubusercontent.com/jookies/jasmin/0.10.13/docker/grafana/dashboards/Jasmin/SMPP%20Server.json';
-          wget -O '/tmp-dashboards/RabbitMQ/Overview.json' 'https://raw.githubusercontent.com/jookies/jasmin/0.10.13/docker/grafana/dashboards/RabbitMQ/Overview.json';
-      volumeMounts:
-        - name: dashboards
-          mountPath: "/tmp-dashboards"
-  volumes:
-    - name: provisioning-ds-prometheus
-      configMap:
-        name: provisioning-ds-prometheus
-    - name: provisioning-dashboards
-      configMap:
-        name: provisioning-dashboards
-    - name: dashboards
-      emptyDir: {}
-    - name: grafana-data
-      hostPath:
-        path: /opt/grafana
-        type: DirectoryOrCreate
+          hostPath:
+            path: /opt/grafana
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: provisioning-ds-prometheus
+  namespace: jasmin
 data:
   prometheus.yml: |
     apiVersion: 1
@@ -79,6 +84,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: provisioning-dashboards
+  namespace: jasmin
 data:
   dashboards.yml: |
     apiVersion: 1
@@ -98,65 +104,88 @@ data:
 apiVersion: v1
 kind: Service
 metadata:
+  annotations: {}
+  labels:
+    name: grafana
+    k8s.kuboard.cn/name: grafana
   name: grafana
-  annotations:
-    metallb.universe.tf/address-pool: management-network
+  namespace: jasmin
 spec:
-  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: grafana
+      nodePort: 30300
+      port: 3000
+      protocol: TCP
+      targetPort: http-grafana
   selector:
     name: grafana
-  ports:
-  - protocol: TCP
-    port: 80
-    targetPort: http-grafana
+  sessionAffinity: None
+  type: NodePort
 ---
-apiVersion: v1
-kind: Pod
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: prometheus
+  namespace: jasmin
   labels:
     name: prometheus
+    k8s.kuboard.cn/name: prometheus
 spec:
-  initContainers:
-    - name: file-ownership-fix
-      image: busybox
-      command: ["/bin/sh","-c"]
-      args:
-        - chown 65534:65534 /prometheus
-      volumeMounts:
-        - name: dataprom
-          mountPath: "/prometheus"
-  containers:
-    - name: prometheus
-      image: prom/prometheus:latest
-      args:
-        - --config.file=/etc/prometheus/prometheus.yml
-        - '--storage.tsdb.path=/prometheus'
-        - '--web.console.libraries=/etc/prometheus/console_libraries'
-        - '--web.console.templates=/etc/prometheus/consoles'
-        - '--web.enable-lifecycle'
-      ports:
-        - containerPort: 9090
-          name: prometheus-port
-          protocol: TCP
-      volumeMounts:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: prometheus
+  template:
+    metadata:
+      labels:
+        name: prometheus
+    spec:
+      initContainers:
+        - name: file-ownership-fix
+          image: busybox
+          command: ["/bin/sh","-c"]
+          args:
+            - chown 65534:65534 /prometheus
+          volumeMounts:
+            - name: dataprom
+              mountPath: "/prometheus"
+      containers:
+        - name: prometheus
+          image: prom/prometheus:latest
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - '--storage.tsdb.path=/prometheus'
+            - '--web.console.libraries=/etc/prometheus/console_libraries'
+            - '--web.console.templates=/etc/prometheus/consoles'
+            - '--web.enable-lifecycle'
+          ports:
+            - containerPort: 9090
+              name: prometheus-port
+              protocol: TCP
+          volumeMounts:
+            - name: etcprom
+              mountPath: /etc/prometheus
+            - name: dataprom
+              mountPath: /prometheus
+      volumes:
         - name: etcprom
-          mountPath: /etc/prometheus
+          configMap:
+            name: promconf
         - name: dataprom
-          mountPath: /prometheus
-  volumes:
-    - name: etcprom
-      configMap:
-        name: promconf
-    - name: dataprom
-      hostPath:
-        path: /opt/prometheus
-        type: DirectoryOrCreate
+          hostPath:
+            path: /opt/prometheus
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: promconf
+  namespace: jasmin
 data:
   prometheus.yml: |
     global:
@@ -176,8 +205,20 @@ data:
 apiVersion: v1
 kind: Service
 metadata:
+  annotations: {}
+  labels:
+    name: prometheus
+    k8s.kuboard.cn/name: prometheus
   name: prometheus
+  namespace: jasmin
 spec:
+  clusterIP: None
+  clusterIPs:
+    - None
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
   selector:
     name: prometheus
-  clusterIP: None
+  sessionAffinity: None
+  type: ClusterIP

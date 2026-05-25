@@ -1,20 +1,43 @@
-apiVersion: v1
-kind: Pod
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: smppsim
+  namespace: jasmin
   labels:
     name: smppsim
+    k8s.kuboard.cn/name: smppsim
 spec:
-  hostname: smppsim
-  containers:
-  - name: smppsim
-    image: jookies/smppsim:latest
+  replicas: 1
+  selector:
+    matchLabels:
+      name: smppsim
+  template:
+    metadata:
+      labels:
+        name: smppsim
+    spec:
+      hostname: smppsim
+      containers:
+      - name: smppsim
+        image: jookies/smppsim:latest
 ---
 apiVersion: v1
 kind: Service
 metadata:
+  annotations: {}
+  labels:
+    name: smppsim
+    k8s.kuboard.cn/name: smppsim
   name: smpp-simulator
+  namespace: jasmin
 spec:
+  clusterIP: None
+  clusterIPs:
+    - None
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
   selector:
     name: smppsim
-  clusterIP: None
+  sessionAffinity: None
+  type: ClusterIP
