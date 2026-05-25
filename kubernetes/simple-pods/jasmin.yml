@@ -1,23 +1,50 @@
+# ============================================================================
+# Jasmin 拆分部署(方案 B):有状态核心单实例 + 无状态 worker 横向扩展
+# ----------------------------------------------------------------------------
+# 拓扑:
+#   jasmin-core (replicas:1, 有状态)  ── SMPP Server / HTTP API / jCli / Router
+#                                        / SMPPClientManager / SMPPServerPB(:14000)
+#       │  connectors(到运营商的 bind)与计费/配额在此,绝不能多副本
+#       │  反向连接 interceptord
+#       ▼
+#   jasmin-interceptord (replicas:1) ── InterceptorPB Server(:8987)
+#
+#   以下 worker 通过 RabbitMQ「竞争消费」协调,可安全多副本:
+#   jasmin-dlrlookupd (replicas:2) ── 消费 DLRLookup-main 队列(AMQP + Redis)
+#   jasmin-dlrd       (replicas:2) ── 消费 dlr_thrower 队列,投递 DLR(AMQP + SMPPServerPB)
+#   jasmin-deliversmd (replicas:2) ── 消费 deliver_sm_thrower 队列,投递 MO(AMQP + SMPPServerPB)
+#
+# 扩容方法:直接调整对应 worker Deployment 的 replicas 即可(无需改配置)。
+# 注意:jasmin-core 必须保持 replicas:1;扩它会导致重复 bind / 限速翻倍 / 计费竞争。
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# 1) jasmin-core —— 有状态核心,固定单副本
+#    strategy=Recreate:滚动更新时先停旧 Pod 再起新 Pod,避免两个 core 同时
+#    连接同一 connector(/tmp 文件锁跨 Pod 不生效,挡不住并行)。
+# ----------------------------------------------------------------------------
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: jasmin
+  name: jasmin-core
   namespace: jasmin
   labels:
-    name: jasmin
-    k8s.kuboard.cn/name: jasmin
+    name: jasmin-core
+    k8s.kuboard.cn/name: jasmin-core
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
-      name: jasmin
+      name: jasmin-core
   template:
     metadata:
       labels:
-        name: jasmin
+        name: jasmin-core
     spec:
       containers:
-        - name: jasmin
+        - name: jasmind
           image: jookies/jasmin:latest
           imagePullPolicy: IfNotPresent
           ports:
@@ -27,11 +54,14 @@ spec:
               name: http-port
             - containerPort: 8990
               name: cli-port
-          command: ["jasmind.py", "--enable-interceptor-client", "-u", "jcliadmin", "-p", "jclipwd"]
-          lifecycle:
-            postStart:
-              exec:
-                command: [ "sh", "-c", "cp /tmp/config/* /etc/jasmin/" ]
+            - containerPort: 14000
+              name: smppspb-port
+          command: ["sh", "-c", "cp /tmp/config/* /etc/jasmin/ && exec jasmind.py --enable-interceptor-client -u jcliadmin -p jclipwd"]
+          env:
+            - name: AMQP_BROKER_HOST
+              value: rabbitmq-broker
+            - name: REDIS_CLIENT_HOST
+              value: redis-server
           volumeMounts:
             - name: jasmin-config
               mountPath: /tmp/config
@@ -39,82 +69,224 @@ spec:
               mountPath: /etc/jasmin/store
             - name: jasmin-logs
               mountPath: /var/log/jasmin
-        - name: interceptord-sidecar
-          image: jookies/jasmin:latest
-          imagePullPolicy: IfNotPresent
-          command: ["interceptord.py"]
-          lifecycle:
-            postStart:
-              exec:
-                command: [ "sh", "-c", "cp /tmp/config/* /etc/jasmin/" ]
-          volumeMounts:
-            - name: interceptor-config
-              mountPath: /tmp/config
-        - name: dlrlookupd-sidecar
-          image: jookies/jasmin:latest
-          imagePullPolicy: IfNotPresent
-          command: ["dlrlookupd.py"]
-          lifecycle:
-            postStart:
-              exec:
-                command: [ "sh", "-c", "cp /tmp/config/* /etc/jasmin/" ]
-          volumeMounts:
-            - name: dlrlookupd-config
-              mountPath: /tmp/config
-        - name: dlrd-sidecar
-          image: jookies/jasmin:latest
-          imagePullPolicy: IfNotPresent
-          command: ["dlrd.py"]
-          lifecycle:
-            postStart:
-              exec:
-                command: [ "sh", "-c", "cp /tmp/config/* /etc/jasmin/" ]
-          volumeMounts:
-            - name: dlr-config
-              mountPath: /tmp/config
-        - name: deliversmd-sidecar
-          image: jookies/jasmin:latest
-          imagePullPolicy: IfNotPresent
-          command: ["deliversmd.py"]
-          lifecycle:
-            postStart:
-              exec:
-                command: [ "sh", "-c", "cp /tmp/config/* /etc/jasmin/" ]
-          volumeMounts:
-            - name: deliversmd-config
-              mountPath: /tmp/config
       volumes:
         - name: jasmin-config
           configMap:
             name: etc-jasmin
         - name: jasmin-data
+          # 注意:hostPath 是节点本地的,Pod 漂移到别的节点会丢失 store(路由/connector/用户)。
+          # 生产环境建议换成基于真实 StorageClass 的 PVC。
           hostPath:
             path: /opt/jasmin/store
             type: DirectoryOrCreate
-        - name: interceptor-config
-          configMap:
-            name: etc-interceptor
-        - name: dlrlookupd-config
-          configMap:
-            name: etc-dlrlookupd
-        - name: dlr-config
-          configMap:
-            name: etc-dlr
-        - name: deliversmd-config
-          configMap:
-            name: etc-deliversmd
         - name: jasmin-logs
           hostPath:
             path: /opt/jasmin/logs
             type: DirectoryOrCreate
+---
+# ----------------------------------------------------------------------------
+# 2) jasmin-interceptord —— InterceptorPB Server,jasmin-core 反向连接它
+# ----------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jasmin-interceptord
+  namespace: jasmin
+  labels:
+    name: jasmin-interceptord
+    k8s.kuboard.cn/name: jasmin-interceptord
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: jasmin-interceptord
+  template:
+    metadata:
+      labels:
+        name: jasmin-interceptord
+    spec:
+      containers:
+        - name: interceptord
+          image: jookies/jasmin:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8987
+              name: pb-port
+          command: ["sh", "-c", "cp /tmp/config/* /etc/jasmin/ && exec interceptord.py"]
+          volumeMounts:
+            - name: interceptor-config
+              mountPath: /tmp/config
+      volumes:
+        - name: interceptor-config
+          configMap:
+            name: etc-interceptor
+---
+# ----------------------------------------------------------------------------
+# 3) jasmin-dlrlookupd —— 可横扩(竞争消费 DLRLookup-main 队列)
+# ----------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jasmin-dlrlookupd
+  namespace: jasmin
+  labels:
+    name: jasmin-dlrlookupd
+    k8s.kuboard.cn/name: jasmin-dlrlookupd
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      name: jasmin-dlrlookupd
+  template:
+    metadata:
+      labels:
+        name: jasmin-dlrlookupd
+    spec:
+      containers:
+        - name: dlrlookupd
+          image: jookies/jasmin:latest
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "cp /tmp/config/* /etc/jasmin/ && exec dlrlookupd.py"]
+          env:
+            - name: AMQP_BROKER_HOST
+              value: rabbitmq-broker
+            - name: REDIS_CLIENT_HOST
+              value: redis-server
+          volumeMounts:
+            - name: dlrlookupd-config
+              mountPath: /tmp/config
+      volumes:
+        - name: dlrlookupd-config
+          configMap:
+            name: etc-dlrlookupd
+---
+# ----------------------------------------------------------------------------
+# 4) jasmin-dlrd —— 可横扩(竞争消费 dlr_thrower 队列);连 core 的 SMPPServerPB
+# ----------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jasmin-dlrd
+  namespace: jasmin
+  labels:
+    name: jasmin-dlrd
+    k8s.kuboard.cn/name: jasmin-dlrd
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      name: jasmin-dlrd
+  template:
+    metadata:
+      labels:
+        name: jasmin-dlrd
+    spec:
+      containers:
+        - name: dlrd
+          image: jookies/jasmin:latest
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "cp /tmp/config/* /etc/jasmin/ && exec dlrd.py"]
+          env:
+            - name: AMQP_BROKER_HOST
+              value: rabbitmq-broker
+            - name: REDIS_CLIENT_HOST
+              value: redis-server
+          volumeMounts:
+            - name: dlr-config
+              mountPath: /tmp/config
+      volumes:
+        - name: dlr-config
+          configMap:
+            name: etc-dlr
+---
+# ----------------------------------------------------------------------------
+# 5) jasmin-deliversmd —— 可横扩(竞争消费 deliver_sm_thrower 队列);连 SMPPServerPB
+# ----------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jasmin-deliversmd
+  namespace: jasmin
+  labels:
+    name: jasmin-deliversmd
+    k8s.kuboard.cn/name: jasmin-deliversmd
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      name: jasmin-deliversmd
+  template:
+    metadata:
+      labels:
+        name: jasmin-deliversmd
+    spec:
+      containers:
+        - name: deliversmd
+          image: jookies/jasmin:latest
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "cp /tmp/config/* /etc/jasmin/ && exec deliversmd.py"]
+          env:
+            - name: AMQP_BROKER_HOST
+              value: rabbitmq-broker
+            - name: REDIS_CLIENT_HOST
+              value: redis-server
+          volumeMounts:
+            - name: deliversmd-config
+              mountPath: /tmp/config
+      volumes:
+        - name: deliversmd-config
+          configMap:
+            name: etc-deliversmd
+---
+# ============================================================================
+# Services
+# ============================================================================
+# 内部服务:核心暴露 SMPPServerPB(:14000)给 dlrd / deliversmd。
+# 仅 ClusterIP,不对外暴露(这是管理用 PB 端口,不能 NodePort)。
+apiVersion: v1
+kind: Service
+metadata:
+  name: jasmin-core
+  namespace: jasmin
+  labels:
+    name: jasmin-core
+    k8s.kuboard.cn/name: jasmin-core
+spec:
+  type: ClusterIP
+  selector:
+    name: jasmin-core
+  ports:
+    - name: smppspb
+      port: 14000
+      targetPort: smppspb-port
+      protocol: TCP
+---
+# 内部服务:interceptord PB(:8987),供 jasmin-core 连接。
+apiVersion: v1
+kind: Service
+metadata:
+  name: jasmin-interceptor
+  namespace: jasmin
+  labels:
+    name: jasmin-interceptord
+    k8s.kuboard.cn/name: jasmin-interceptord
+spec:
+  type: ClusterIP
+  selector:
+    name: jasmin-interceptord
+  ports:
+    - name: pb
+      port: 8987
+      targetPort: pb-port
+      protocol: TCP
 ---
 apiVersion: v1
 kind: Service
 metadata:
   annotations: {}
   labels:
-    name: jasmin
-    k8s.kuboard.cn/name: jasmin
+    name: jasmin-core
+    k8s.kuboard.cn/name: jasmin-core
   name: jasmin-cli
   namespace: jasmin
 spec:
@@ -130,7 +302,7 @@ spec:
       protocol: TCP
       targetPort: cli-port
   selector:
-    name: jasmin
+    name: jasmin-core
   sessionAffinity: None
   type: NodePort
 ---
@@ -139,8 +311,8 @@ kind: Service
 metadata:
   annotations: {}
   labels:
-    name: jasmin
-    k8s.kuboard.cn/name: jasmin
+    name: jasmin-core
+    k8s.kuboard.cn/name: jasmin-core
   name: jasmin-smpp-api
   namespace: jasmin
 spec:
@@ -156,7 +328,7 @@ spec:
       protocol: TCP
       targetPort: smpp-port
   selector:
-    name: jasmin
+    name: jasmin-core
   sessionAffinity: None
   type: NodePort
 ---
@@ -165,8 +337,8 @@ kind: Service
 metadata:
   annotations: {}
   labels:
-    name: jasmin
-    k8s.kuboard.cn/name: jasmin
+    name: jasmin-core
+    k8s.kuboard.cn/name: jasmin-core
   name: jasmin-http-api
   namespace: jasmin
 spec:
@@ -182,10 +354,13 @@ spec:
       protocol: TCP
       targetPort: http-port
   selector:
-    name: jasmin
+    name: jasmin-core
   sessionAffinity: None
   type: NodePort
 ---
+# ============================================================================
+# ConfigMaps
+# ============================================================================
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -215,6 +390,10 @@ data:
       [redis-client]
       host = redis-server
       poolsize = 30
+
+      # 拆分部署:interceptord 已独立成单独 Deployment,这里指向其 Service。
+      [interceptor-client]
+      host = jasmin-interceptor
 
       [jcli]
       bind = 0.0.0.0
@@ -270,6 +449,10 @@ data:
       [redis-client]
       host = redis-server
       poolsize = 30
+
+      # 拆分部署:dlrd 独立后需连回 jasmin-core 上的 SMPPServerPB(投递 SMPP DLR)。
+      [smpp-server-pb-client]
+      host = jasmin-core
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -277,7 +460,8 @@ metadata:
   name: etc-deliversmd
   namespace: jasmin
 data:
-  deliversmd.cfg: |
+  # 注意:deliversmd.py 默认读取的文件名是 deliversm.cfg(非 deliversmd.cfg)。
+  deliversm.cfg: |
       # This is the Jasmin Deliver-Sm Daemon configuration file.
       # Some parameters are slightly fine tuned for better performance, amqp and redis
       # parameters are updated accordingly to kubernetes requirements.
@@ -292,3 +476,7 @@ data:
       [redis-client]
       host = redis-server
       poolsize = 30
+
+      # 拆分部署:deliversmd 独立后需连回 jasmin-core 上的 SMPPServerPB(投递 SMPP MO)。
+      [smpp-server-pb-client]
+      host = jasmin-core
